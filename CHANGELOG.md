@@ -1,5 +1,11 @@
 # Superdesk Server Changelog
 
+## [1.7.2] 2017-07-13
+
+### Added
+
+- Add Livesite editor privilege.
+
 ## [1.7.1] 2017-06-05
 
 ### Fixed
