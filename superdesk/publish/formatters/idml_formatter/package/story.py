@@ -29,9 +29,9 @@ class Story(BasePackageElement):
         'PointSize': '12'
     }
 
-    def __init__(self, self_id, content, attributes=None):
+    def __init__(self, self_id, element, attributes=None):
         self.self_id = self_id
-        self._content = content
+        self._element = element
         super().__init__(attributes)
 
     @property
@@ -101,10 +101,10 @@ class Story(BasePackageElement):
             characterstylerange,
             'Content'
         )
-        content.text = self._content
+        content.text = self._element.text
 
         # StoryPreference
-        storypreference = etree.SubElement(
+        etree.SubElement(
             story,
             'StoryPreference',
             attrib=self.merge_attributes(
@@ -117,7 +117,7 @@ class Story(BasePackageElement):
 
     @property
     def length(self):
-        return len(self._content)
+        return len(self._element.text)
 
     @staticmethod
     def guess_height(story, inner_width):

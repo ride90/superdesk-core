@@ -5,7 +5,14 @@ from lxml import etree
 import superdesk
 from superdesk.publish.formatters import Formatter
 
-from .package import Mimetype, Preferences, Story, Spread, Designmap
+from .package import (
+    Mimetype,
+    Preferences,
+    Story,
+    Spread,
+    Designmap,
+    StoryTable
+)
 
 
 class IDMLFormatter(Formatter):
@@ -16,7 +23,7 @@ class IDMLFormatter(Formatter):
     PAGE_MARGIN_BOTTOM = 50
     PAGE_MARGIN_LEFT = 50
     PAGE_MARGIN_RIGHT = 50
-    DOCUMENT_INNER_WIDTH = DOCUMENT_PAGE_WIDTH - PAGE_MARGIN_LEFT - PAGE_MARGIN_RIGHT
+    DOCUMENT_PAGE_INNER_WIDTH = DOCUMENT_PAGE_WIDTH - PAGE_MARGIN_LEFT - PAGE_MARGIN_RIGHT
     TAGS_SETTINGS = {
         'p': {
             'PointSize': '12'
@@ -38,6 +45,9 @@ class IDMLFormatter(Formatter):
         },
         'h6': {
             'PointSize': '9'
+        },
+        'table': {
+            'PointSize': '10'
         }
     }
 
@@ -47,7 +57,6 @@ class IDMLFormatter(Formatter):
         self._idml_bytes_buffer = None
         self._in_memory_zip = None
         self._package = []
-        self._entities = []
         self._counter = {
             'spread': 0,
             'page': 0,
@@ -56,10 +65,10 @@ class IDMLFormatter(Formatter):
         }
 
     def format(self, article, subscriber, codes=None):
-        # print('!'* 10, article)
+        #print('!'* 10, article)
         # print('#'* 10, subscriber)
         # print('&'* 10, codes)
-        # publish_seq_num = superdesk.get_resource_service('subscribers').generate_sequence_number(subscriber)
+        #publish_seq_num = superdesk.get_resource_service('subscribers').generate_sequence_number(subscriber)
         publish_seq_num = '1000'
 
         idml_bytes = self._create_idml(article)
@@ -92,7 +101,7 @@ class IDMLFormatter(Formatter):
                     'FacingPages': 'false'}
             })
         )
-        self._create_entities(article['body_html'])
+        self._create_packages(article['body_html'])
         self._create_spreads()
         self._create_designmap()
         self._write_package()
@@ -115,39 +124,51 @@ class IDMLFormatter(Formatter):
                 item.render()
             )
 
-    def _create_entities(self, body_html):
+    def _create_packages(self, body_html):
+        # from pprint import pprint
+        # print(body_html)
+
         parser = etree.HTMLParser(recover=True, remove_blank_text=True)
         root = etree.fromstring(body_html, parser)
         body = root.find('body')
 
-        # TODO optimize it, make it configurable
         for element in body:
             if element.tag in ['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
-                # create story xml
-                story = Story(
-                    self._next_story_id(),
-                    element.text,
-                    attributes={
-                        'characterstylerange': {
-                            'PointSize': self.TAGS_SETTINGS[element.tag]['PointSize']
+                # create text story
+                self._package.append(
+                    Story(
+                        self._next_story_id(),
+                        element,
+                        attributes={
+                            'characterstylerange': {
+                                'PointSize': self.TAGS_SETTINGS[element.tag]['PointSize']
+                            }
                         }
-                    }
+                    )
                 )
-                self._package.append(story)
-                self._entities.append({'type': 'story', 'self_id': story.self_id})
+            elif element.tag == 'table':
+                # create text story
+                self._package.append(
+                    StoryTable(
+                        self._next_story_id(),
+                        element,
+                        self.DOCUMENT_PAGE_INNER_WIDTH,
+                        attributes={
+                            'characterstylerange': {
+                                'PointSize': self.TAGS_SETTINGS[element.tag]['PointSize']
+                            }
+                        }
+                    )
+                )
 
     def _create_spreads(self):
-        if not self._entities:
-            return
-
         active_spread = self._create_spread_with_page()
 
-        # walk through entities and place them into spread->page
-        for entity in self._entities:
-            if entity['type'] == 'story':
+        # walk through packages and place them into spread->page
+        for package in self._package:
+            if type(package) == Story:
                 # guess height for a text frame
-                story = self._get_story(entity['self_id'])
-                height = Story.guess_height(story, self.DOCUMENT_INNER_WIDTH)
+                height = Story.guess_height(package, self.DOCUMENT_PAGE_INNER_WIDTH)
 
                 # check if textframe will fit current page
                 if not active_spread.check_if_fits(height):
@@ -159,7 +180,25 @@ class IDMLFormatter(Formatter):
                     attributes={
                         'textframe': {
                             'Self': self._next_textframe_id(),
-                            'ParentStory': story.self_id,
+                            'ParentStory': package.self_id,
+                        }
+                    }
+                )
+            elif type(package) == StoryTable:
+                # guess height for a text frame
+                height = StoryTable.guess_height(package, self.DOCUMENT_PAGE_INNER_WIDTH)
+
+                # check if textframe (yes, table is in textframe) will fit current page
+                if not active_spread.check_if_fits(height):
+                    active_spread = self._create_spread_with_page()
+
+                # place text frame
+                active_spread.place_textframe(
+                    height=height,
+                    attributes={
+                        'textframe': {
+                            'Self': self._next_textframe_id(),
+                            'ParentStory': package.self_id,
                         }
                     }
                 )
@@ -168,7 +207,7 @@ class IDMLFormatter(Formatter):
         designmap = Designmap()
 
         # let's fill designmap with Preferences, Spread and Story.
-        for _type in (Preferences, Spread, Story):
+        for _type in (Preferences, Spread, Story, StoryTable):
             for obj in [i for i in self._package if i.__class__ is _type]:
                 designmap.add_element(_type.__name__, obj.filename)
 
@@ -207,6 +246,9 @@ class IDMLFormatter(Formatter):
 
     def _get_story(self, self_id):
         return [i for i in self._package if i.__class__ is Story and i.self_id == self_id][0]
+
+    def _get_story_table(self, self_id):
+        return [i for i in self._package if i.__class__ is StoryTable and i.self_id == self_id][0]
 
     def _next_story_id(self):
         self_id = 'story_{}'.format(self._counter['story'])
